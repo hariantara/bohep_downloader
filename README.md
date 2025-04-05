@@ -10,6 +10,10 @@ A Python-based video downloader application with a modern GUI interface.
 - Custom save location
 - Cancel download functionality
 
+## Download
+
+[![Download Bohep Downloader](https://img.shields.io/badge/Download-Bohep%20Downloader-blue.svg)](https://github.com/hariantara/bohep_downloader/releases/latest/download/Bohep%20Downloader.dmg)
+
 ## Prerequisites
 
 Before installing Bohep Downloader, make sure you have the following installed:
