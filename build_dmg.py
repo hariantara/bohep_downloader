@@ -1,69 +1,140 @@
 #!/usr/bin/env python3
+
 import os
+import sys
 import shutil
 import subprocess
 from pathlib import Path
 
-def create_dmg():
-    # Paths
-    workspace = Path(os.getcwd())
-    dist_dir = workspace / 'dist'
-    app_name = 'Bohep Downloader.app'
-    dmg_name = 'Bohep-Downloader.dmg'
+def create_app_bundle():
+    """Create the app bundle using PyInstaller."""
+    print("Creating app bundle...")
     
-    # Create a temporary directory for DMG contents
-    temp_dir = dist_dir / 'dmg_temp'
-    if temp_dir.exists():
-        shutil.rmtree(temp_dir)
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    # Clean previous builds
+    if os.path.exists("dist"):
+        shutil.rmtree("dist")
+    if os.path.exists("build"):
+        shutil.rmtree("build")
     
-    # Copy the app to the temporary directory
-    app_source = dist_dir / 'bohep-downloader-darwin-arm64-package' / app_name
-    app_dest = temp_dir / app_name
-    if app_source.exists():
-        shutil.copytree(app_source, app_dest, dirs_exist_ok=True)
-        
-        # Set proper permissions
-        os.system(f'chmod -R 755 "{app_dest}"')
-        os.system(f'chmod +x "{app_dest}/Contents/MacOS/"*')
-    else:
-        print(f"Error: Source app not found at {app_source}")
-        return
+    # PyInstaller command with proper macOS app bundle settings
+    cmd = [
+        "pyinstaller",
+        "--name=Bohep Downloader",
+        "--windowed",
+        "--noconfirm",
+        "--clean",
+        "--debug=all",  # Enable debug mode
+        "--icon=assets/icon.icns",
+        "--add-data=assets:assets",
+        "--target-arch=arm64",  # For Apple Silicon
+        "--collect-all=customtkinter",  # Ensure customtkinter is fully bundled
+        "--collect-all=tkinter",  # Ensure tkinter is fully bundled
+        "--collect-all=PIL",  # Ensure PIL/Pillow is fully bundled
+        "--collect-all=yt_dlp",  # Ensure yt-dlp is fully bundled
+        "bohep_downloader/__main__.py"
+    ]
     
-    # Create a symbolic link to Applications folder
-    os.symlink('/Applications', temp_dir / 'Applications')
+    subprocess.run(cmd, check=True)
     
-    # Create the DMG
-    dmg_path = dist_dir / dmg_name
-    if dmg_path.exists():
-        os.unlink(dmg_path)
+    # Set proper permissions
+    app_path = Path("dist/Bohep Downloader.app")
+    if not app_path.exists():
+        raise Exception("App bundle creation failed")
     
-    # Use create-dmg to create the DMG
-    subprocess.run([
-        'create-dmg',
-        '--volname', 'Bohep Downloader',
-        '--window-pos', '200', '120',
-        '--window-size', '800', '400',
-        '--icon-size', '100',
-        '--icon', app_name, '200', '200',
-        '--hide-extension', app_name,
-        '--app-drop-link', '600', '200',
-        str(dmg_path),
-        str(temp_dir)
-    ], check=True)
+    # Set executable permissions
+    os.system(f'chmod -R 755 "{app_path}"')
+    os.system(f'chmod +x "{app_path}/Contents/MacOS/"*')
     
-    # Set proper permissions on the DMG
-    os.system(f'chmod 755 "{dmg_path}"')
-    
-    # Clean up
-    shutil.rmtree(temp_dir)
-    
-    print(f"\nDMG created successfully at:\n{dmg_path}")
-    print("\nTo install:")
-    print("1. Double-click the DMG file")
-    print("2. Drag 'Bohep Downloader' to the Applications folder")
-    print("3. Eject the DMG")
-    print("4. You can now launch the app from your Applications folder")
+    # Create Info.plist if it doesn't exist
+    info_plist = app_path / "Contents/Info.plist"
+    if not info_plist.exists():
+        with open(info_plist, "w") as f:
+            f.write('''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>Bohep Downloader</string>
+    <key>CFBundleExecutable</key>
+    <string>Bohep Downloader</string>
+    <key>CFBundleIconFile</key>
+    <string>icon.icns</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.bohep.downloader</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Bohep Downloader</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.13.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSRequiresAquaSystemAppearance</key>
+    <false/>
+    <key>LSEnvironment</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>@executable_path/../Resources/lib/python3.13/site-packages</string>
+    </dict>
+</dict>
+</plist>''')
 
-if __name__ == '__main__':
-    create_dmg() 
+def create_dmg():
+    """Create a DMG file from the app bundle."""
+    print("Creating DMG file...")
+    
+    # DMG settings
+    volume_name = "Bohep Downloader"
+    dmg_name = "Bohep Downloader.dmg"
+    app_path = Path("dist/Bohep Downloader.app")
+    dmg_path = Path(f"dist/{dmg_name}")
+    
+    # Remove existing DMG if it exists
+    if dmg_path.exists():
+        dmg_path.unlink()
+    
+    # Create DMG
+    cmd = [
+        "create-dmg",
+        "--volname", volume_name,
+        "--volicon", "assets/icon.icns",
+        "--window-pos", "200", "120",
+        "--window-size", "800", "400",
+        "--icon-size", "100",
+        "--icon", f"{volume_name}.app", "190", "190",
+        "--hide-extension", f"{volume_name}.app",
+        "--app-drop-link", "600", "185",
+        str(dmg_path),
+        str(app_path)
+    ]
+    
+    subprocess.run(cmd, check=True)
+    print(f"DMG created successfully at: {dmg_path}")
+
+def main():
+    """Main build process."""
+    try:
+        # Check if create-dmg is installed
+        if subprocess.run(["which", "create-dmg"], capture_output=True).returncode != 0:
+            print("Installing create-dmg...")
+            subprocess.run(["brew", "install", "create-dmg"], check=True)
+        
+        # Create app bundle
+        create_app_bundle()
+        
+        # Create DMG
+        create_dmg()
+        
+        print("\nBuild completed successfully!")
+        print("You can find the DMG file in the dist directory.")
+        
+    except Exception as e:
+        print(f"Error during build: {str(e)}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main() 

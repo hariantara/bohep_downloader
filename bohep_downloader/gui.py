@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import threading
 import os
-from .downloader import BohepDownloader
+from bohep_downloader.downloader import BohepDownloader
 from pathlib import Path
 import re
 

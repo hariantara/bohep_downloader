@@ -3,22 +3,23 @@ import os
 from PIL import Image, ImageDraw, ImageFont
 
 def create_icon():
-    # Create a 1024x1024 image with a blue background
+    # Create a 1024x1024 image with a white background
     size = 1024
-    img = Image.new('RGBA', (size, size), color=(0, 120, 212, 255))
-    draw = ImageDraw.Draw(img)
+    image = Image.new('RGBA', (size, size), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(image)
     
-    # Draw a white circle
-    circle_margin = 50
-    draw.ellipse(
-        [(circle_margin, circle_margin), (size - circle_margin, size - circle_margin)],
-        fill=(255, 255, 255, 255)
+    # Draw a rounded rectangle
+    margin = size // 8
+    draw.rounded_rectangle(
+        [(margin, margin), (size - margin, size - margin)],
+        radius=size//8,
+        fill='#007AFF'
     )
     
-    # Draw text
+    # Add text
     try:
-        font = ImageFont.truetype("Arial Bold", 200)
-    except IOError:
+        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", size//8)
+    except:
         font = ImageFont.load_default()
     
     text = "BD"
@@ -26,26 +27,28 @@ def create_icon():
     text_width = text_bbox[2] - text_bbox[0]
     text_height = text_bbox[3] - text_bbox[1]
     
-    text_position = ((size - text_width) // 2, (size - text_height) // 2 - 50)
-    draw.text(text_position, text, fill=(0, 120, 212, 255), font=font)
+    x = (size - text_width) // 2
+    y = (size - text_height) // 2
+    draw.text((x, y), text, fill='white', font=font)
     
-    # Save as PNG
-    img.save('icon.png')
+    # Create iconset directory
+    os.makedirs("assets/icon.iconset", exist_ok=True)
     
-    # Convert to ICNS (macOS icon format)
-    os.system('mkdir icon.iconset')
+    # Save different sizes
     sizes = [16, 32, 64, 128, 256, 512, 1024]
-    
     for size in sizes:
-        resized = img.resize((size, size), Image.LANCZOS)
-        resized.save(f'icon.iconset/icon_{size}x{size}.png')
+        resized = image.resize((size, size), Image.Resampling.LANCZOS)
+        resized.save(f'assets/icon.iconset/icon_{size}x{size}.png')
         if size <= 512:
-            resized.save(f'icon.iconset/icon_{size}x{size}@2x.png')
+            resized.save(f'assets/icon.iconset/icon_{size}x{size}@2x.png')
     
-    os.system('iconutil -c icns icon.iconset')
-    os.system('rm -rf icon.iconset')
+    # Convert to icns
+    os.system('iconutil -c icns assets/icon.iconset -o assets/icon.icns')
     
-    print("Icon created successfully: icon.icns")
+    # Clean up
+    os.system('rm -rf assets/icon.iconset')
+    
+    print("Icon created successfully at assets/icon.icns")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     create_icon() 
