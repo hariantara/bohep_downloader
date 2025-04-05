@@ -6,6 +6,54 @@ import shutil
 import subprocess
 from pathlib import Path
 
+def sign_app():
+    """Sign the app bundle with Developer ID certificate."""
+    print("Signing app bundle...")
+    app_path = Path("dist/Bohep Downloader.app")
+    
+    # First, sign the JavaScript file
+    js_path = app_path / "Contents/MacOS/decode_packed.js"
+    if js_path.exists():
+        print("Signing JavaScript file...")
+        cmd = [
+            "codesign",
+            "--force",
+            "--sign", "Developer ID Application: Jet Chay (B27HBST3DP)",
+            "--timestamp",
+            str(js_path)
+        ]
+        subprocess.run(cmd, check=True)
+    
+    # Sign the Python framework
+    python_framework = app_path / "Contents/Frameworks/Python.framework"
+    if python_framework.exists():
+        print("Signing Python framework...")
+        cmd = [
+            "codesign",
+            "--force",
+            "--sign", "Developer ID Application: Jet Chay (B27HBST3DP)",
+            "--timestamp",
+            "--deep",
+            str(python_framework)
+        ]
+        subprocess.run(cmd, check=True)
+    
+    # Then sign the entire app bundle
+    print("Signing app bundle...")
+    cmd = [
+        "codesign",
+        "--force",
+        "--options", "runtime",
+        "--sign", "Developer ID Application: Jet Chay (B27HBST3DP)",
+        "--timestamp",
+        "--deep",
+        "--verbose",
+        str(app_path)
+    ]
+    
+    subprocess.run(cmd, check=True)
+    print("App bundle signed successfully")
+
 def create_app_bundle():
     """Create the app bundle using PyInstaller."""
     print("Creating app bundle...")
@@ -15,6 +63,14 @@ def create_app_bundle():
         shutil.rmtree("dist")
     if os.path.exists("build"):
         shutil.rmtree("build")
+    
+    # Check if FFmpeg is installed
+    if subprocess.run(["which", "ffmpeg"], capture_output=True).returncode != 0:
+        print("Installing FFmpeg...")
+        subprocess.run(["brew", "install", "ffmpeg"], check=True)
+    
+    # Get FFmpeg path
+    ffmpeg_path = subprocess.check_output(["which", "ffmpeg"]).decode().strip()
     
     # PyInstaller command with proper macOS app bundle settings
     cmd = [
@@ -27,6 +83,8 @@ def create_app_bundle():
         "--icon=assets/icon.icns",
         "--add-data=assets:assets",
         "--add-data=bohep_downloader/decode_packed.js:Resources",  # Add decode_packed.js to Resources
+        "--add-data=bohep_downloader/decode_packed.js:MacOS",  # Add decode_packed.js to MacOS
+        f"--add-binary={ffmpeg_path}:MacOS",  # Add FFmpeg binary
         "--target-arch=arm64",  # For Apple Silicon
         "--collect-all=customtkinter",  # Ensure customtkinter is fully bundled
         "--collect-all=tkinter",  # Ensure tkinter is fully bundled
@@ -92,6 +150,8 @@ def create_app_bundle():
         <string>@executable_path/../Resources/lib/python3.13/site-packages</string>
         <key>NODE_PATH</key>
         <string>@executable_path/../Resources</string>
+        <key>PATH</key>
+        <string>@executable_path/../MacOS:@executable_path/../Resources</string>
     </dict>
 </dict>
 </plist>''')
@@ -138,6 +198,9 @@ def main():
         
         # Create app bundle
         create_app_bundle()
+        
+        # Sign the app bundle
+        sign_app()
         
         # Create DMG
         create_dmg()

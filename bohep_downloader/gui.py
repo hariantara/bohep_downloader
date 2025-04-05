@@ -5,12 +5,13 @@ import os
 from bohep_downloader.downloader import BohepDownloader
 from pathlib import Path
 import re
+from queue import Queue
 
 class BohepDownloaderGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Bohep Downloader")
-        self.root.geometry("700x500")
+        self.root.geometry("700x600")
         self.root.resizable(True, True)
         
         # Set theme
@@ -210,45 +211,57 @@ class BohepDownloaderGUI:
             self.location_entry.delete(0, tk.END)
             self.location_entry.insert(0, directory)
     
-    def update_progress(self, progress_info):
-        """Update progress bar and details with download information."""
+    def update_progress(self, progress_data):
+        """Update progress bar and details."""
         try:
-            # Handle both dictionary and integer progress values
-            if isinstance(progress_info, dict):
+            if isinstance(progress_data, dict):
+                # Handle detailed progress data
+                percentage = progress_data.get('percentage', 0)
+                completed = progress_data.get('completed', 0)
+                total = progress_data.get('total', 0)
+                speed = progress_data.get('speed', 0)
+                eta = progress_data.get('eta', 0)
+                stage = progress_data.get('stage', 'download')
+                
                 # Update progress bar
-                percentage = progress_info.get('percentage', 0)
                 self.progress_var.set(percentage)
                 
-                # Update progress details
-                completed = progress_info.get('completed', 0)
-                total = progress_info.get('total', 0)
-                speed = progress_info.get('speed', 0)
-                eta = progress_info.get('eta', 0)
-                
-                # Format speed and ETA
-                speed_str = f"{speed:.2f} segments/s"
-                eta_str = f"{int(eta//60)}m {int(eta%60)}s" if eta > 0 else "calculating..."
-                
-                # Update progress details label
+                # Update progress details with terminal-like format
                 if total > 0:
-                    details_text = f"Downloading segments: {completed}/{total} ({percentage:.1f}%) | Speed: {speed_str} | ETA: {eta_str}"
-                else:
-                    details_text = "Preparing download..."
-            else:
-                # Handle integer progress value (simple percentage)
-                percentage = progress_info
-                self.progress_var.set(percentage)
+                    if stage == 'download':
+                        details = f"Downloading segments: {completed}/{total} ({percentage:.1f}%)"
+                        if speed and speed > 0:
+                            details += f" | Speed: {speed:.1f} segments/s"
+                        if eta and eta > 0:
+                            details += f" | ETA: {eta:.0f}s"
+                    elif stage == 'combine':
+                        details = f"Combining segments: {percentage:.1f}%"
+                    elif stage == 'segment':
+                        # Show segment download progress
+                        details = f"Downloading segment: {completed}/{total} bytes ({percentage:.1f}%)"
+                    else:
+                        details = f"Processing: {percentage:.1f}%"
+                    self.progress_details.config(text=details)
                 
-                if percentage < 100:
-                    details_text = f"Processing: {percentage:.1f}%"
-                else:
-                    details_text = "Download completed!"
-                    # Reset progress after a short delay
-                    self.root.after(1000, self.reset_progress)
+                # Update status based on stage
+                if stage == 'download':
+                    if percentage < 10:
+                        self.update_status("Preparing download...")
+                    else:
+                        self.update_status("Downloading segments...")
+                elif stage == 'combine':
+                    self.update_status("Combining segments...")
+                elif stage == 'segment':
+                    self.update_status("Downloading segment...")
+                elif stage == 'complete':
+                    self.update_status("Download complete!")
+            else:
+                # Handle simple percentage updates
+                self.progress_var.set(progress_data)
+                if progress_data < 100:
+                    self.progress_details.config(text=f"Processing: {progress_data:.1f}%")
             
-            self.progress_details.config(text=details_text)
-            
-            # Update the GUI
+            # Force GUI update
             self.root.update_idletasks()
         except Exception as e:
             print(f"Error updating progress: {e}")
@@ -265,9 +278,11 @@ class BohepDownloaderGUI:
         self.root.update_idletasks()
     
     def download_complete(self, success, message):
+        """Handle download completion."""
         self.is_downloading = False
         self.download_button.config(state=tk.NORMAL)
         self.cancel_button.config(state=tk.DISABLED)
+        self.check_url_button.config(state=tk.NORMAL)  # Re-enable URL check
         
         # Reset progress bar and details
         self.progress_var.set(0)
@@ -287,6 +302,7 @@ class BohepDownloaderGUI:
             self.update_status("Cancelling download...")
             self.downloader.cancel()
             self.cancel_button.config(state=tk.DISABLED)
+            self.check_url_button.config(state=tk.NORMAL)  # Re-enable URL check
     
     def download_video(self):
         """Download the video in a separate thread."""
@@ -309,20 +325,36 @@ class BohepDownloaderGUI:
             if not self.downloader:
                 self.downloader = BohepDownloader()
             
+            # Reset cancellation flag
+            self.downloader.reset_cancellation()
+            
             # Start download
             self.is_downloading = True
-            self.update_status("Downloading...")
+            self.update_status("Preparing download...")
+            self.root.update_idletasks()  # Force GUI update
+            
+            # Create a simple progress callback that directly updates the GUI
+            def progress_callback(progress_data):
+                # Use a simple function to avoid recursion
+                def update():
+                    self.update_progress(progress_data)
+                # Schedule the update on the main thread
+                self.root.after(0, update)
             
             # Download with progress updates
             self.downloader.download(
                 url=url,
-                quality=quality,  # Pass the quality with 'p' suffix
+                quality=quality,
                 save_dir=save_dir,
-                progress_callback=self.update_progress
+                progress_callback=progress_callback
             )
             
-            # Download completed successfully
-            self.download_complete(True, "Download completed successfully!")
+            # Check if download was cancelled
+            if self.downloader.is_cancelled():
+                self.download_complete(False, "Download cancelled by user")
+            else:
+                # Download completed successfully
+                self.download_complete(True, "Download completed successfully!")
             
         except Exception as e:
             self.download_complete(False, str(e))
@@ -358,6 +390,7 @@ class BohepDownloaderGUI:
         # Disable download button and enable cancel button
         self.download_button.config(state=tk.DISABLED)
         self.cancel_button.config(state=tk.NORMAL)
+        self.check_url_button.config(state=tk.DISABLED)  # Disable URL check during download
         
         # Reset progress
         self.progress_var.set(0)

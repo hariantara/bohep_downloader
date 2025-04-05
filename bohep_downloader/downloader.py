@@ -48,15 +48,22 @@ class BohepDownloader:
         self.output_file = None
         self.progress_callback = None
         self.cancelled = False
+        self._lock = threading.Lock()
+
+    def reset_cancellation(self):
+        """Reset the cancellation flag."""
+        with self._lock:
+            self.cancelled = False
 
     def cancel(self):
         """Cancel the current download operation."""
-        self.cancelled = True
-        print("Download cancelled by user")
-        
-    def reset_cancellation(self):
-        """Reset the cancellation flag."""
-        self.cancelled = False
+        with self._lock:
+            self.cancelled = True
+
+    def is_cancelled(self):
+        """Check if the download has been cancelled."""
+        with self._lock:
+            return self.cancelled
 
     def extract_video_id(self, url):
         """Extract video ID from the URL."""
@@ -410,240 +417,60 @@ class BohepDownloader:
             response = self.session.get(page_url)
             response.raise_for_status()
             
-            # Find eval line in the response
+            # First try to find m3u8 URLs directly in the page content
+            url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', response.text)
+            if url_matches:
+                print(f"Found {len(url_matches)} m3u8 URLs directly in the page content")
+                # Create video URL objects
+                video_urls = []
+                for url in url_matches:
+                    # Try to determine resolution from URL
+                    resolution = 720  # Default resolution
+                    if '1280x720' in url or '1080' in url:
+                        resolution = 1080
+                    elif '842x480' in url or '720' in url:
+                        resolution = 720
+                    elif '640x360' in url or '360' in url:
+                        resolution = 360
+                    
+                    video_urls.append({
+                        'url': str(url),
+                        'resolution': resolution,
+                        'bandwidth': resolution * 1000  # Approximate bandwidth
+                    })
+                
+                # Sort by resolution
+                video_urls.sort(key=lambda x: x['resolution'], reverse=True)
+                return video_urls
+            
+            # If no direct URLs found, try to find eval content
             lines = response.text.split('\n')
             eval_line = None
             for line in lines:
                 if 'eval(' in line:
                     eval_line = line.strip()
-                    print(f"Found eval line: {eval_line[:100]}...")  # Print first 100 chars
+                    print(f"Found eval line: {eval_line[:100]}...")
                     break
-
-            if not eval_line:
-                print("Could not find eval content in the page, trying direct URL extraction")
-                # Try to find m3u8 URLs directly in the page content
-                url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', response.text)
-                if url_matches:
-                    print(f"Found {len(url_matches)} m3u8 URLs directly in the page content")
-                    # Create video URL objects
-                    video_urls = []
-                    for url in url_matches:
-                        # Try to determine resolution from URL
-                        resolution = 720  # Default resolution
-                        if '1280x720' in url or '1080' in url:
-                            resolution = 1080
-                        elif '842x480' in url or '720' in url:
-                            resolution = 720
-                        elif '640x360' in url or '360' in url:
-                            resolution = 360
-                        
-                        video_urls.append({
-                            'url': str(url),
-                            'resolution': resolution,
-                            'bandwidth': resolution * 1000
-                        })
-                    
-                    # Sort by resolution
-                    video_urls.sort(key=lambda x: x['resolution'], reverse=True)
-                    return video_urls
-                
-                # Try to find URLs with a more lenient pattern
-                url_matches = re.findall(r'https://[^\'"\s]+', response.text)
-                if url_matches:
-                    print(f"Found {len(url_matches)} potential URLs in the page content")
-                    # Filter for URLs that might be video-related
-                    video_urls = []
-                    for url in url_matches:
-                        # Check if URL might be a video URL
-                        if any(ext in url.lower() for ext in ['.m3u8', '.mp4', '.ts', '.m4v', '.avi', '.mkv']):
-                            # Try to determine resolution from URL
-                            resolution = 720  # Default resolution
-                            if '1280x720' in url or '1080' in url:
-                                resolution = 1080
-                            elif '842x480' in url or '720' in url:
-                                resolution = 720
-                            elif '640x360' in url or '360' in url:
-                                resolution = 360
-                            
-                            video_urls.append({
-                                'url': str(url),
-                                'resolution': resolution,
-                                'bandwidth': resolution * 1000
-                            })
-                    
-                    if video_urls:
-                        # Sort by resolution
-                        video_urls.sort(key=lambda x: x['resolution'], reverse=True)
-                        return video_urls
-                
-                # Try to find URLs in script tags
-                soup = BeautifulSoup(response.text, 'html.parser')
-                script_tags = soup.find_all('script')
-                for script in script_tags:
-                    script_content = script.string
-                    if script_content:
-                        # Try to find m3u8 URLs in script content
-                        url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', script_content)
-                        if url_matches:
-                            print(f"Found {len(url_matches)} m3u8 URLs in script tags")
-                            # Create video URL objects
-                            video_urls = []
-                            for url in url_matches:
-                                # Try to determine resolution from URL
-                                resolution = 720  # Default resolution
-                                if '1280x720' in url or '1080' in url:
-                                    resolution = 1080
-                                elif '842x480' in url or '720' in url:
-                                    resolution = 720
-                                elif '640x360' in url or '360' in url:
-                                    resolution = 360
-                                
-                                video_urls.append({
-                                    'url': str(url),
-                                    'resolution': resolution,
-                                    'bandwidth': resolution * 1000
-                                })
-                            
-                            # Sort by resolution
-                            video_urls.sort(key=lambda x: x['resolution'], reverse=True)
-                            return video_urls
-                
-                raise ValueError("Could not find eval content or m3u8 URLs in the page")
-
-            decoded_content = self.decode_eval(eval_line)
             
-            if not decoded_content:
-                print("Failed to decode eval content, trying direct URL extraction")
-                # Try to find m3u8 URLs directly in the page content
-                url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', response.text)
-                if url_matches:
-                    print(f"Found {len(url_matches)} m3u8 URLs directly in the page content")
-                    # Create video URL objects
-                    video_urls = []
-                    for url in url_matches:
-                        # Try to determine resolution from URL
-                        resolution = 720  # Default resolution
-                        if '1280x720' in url or '1080' in url:
-                            resolution = 1080
-                        elif '842x480' in url or '720' in url:
-                            resolution = 720
-                        elif '640x360' in url or '360' in url:
-                            resolution = 360
-                        
-                        video_urls.append({
-                            'url': str(url),
-                            'resolution': resolution,
-                            'bandwidth': resolution * 1000
-                        })
-                    
-                    # Sort by resolution
-                    video_urls.sort(key=lambda x: x['resolution'], reverse=True)
-                    return video_urls
-                
-                # Try to find URLs with a more lenient pattern
-                url_matches = re.findall(r'https://[^\'"\s]+', response.text)
-                if url_matches:
-                    print(f"Found {len(url_matches)} potential URLs in the page content")
-                    # Filter for URLs that might be video-related
-                    video_urls = []
-                    for url in url_matches:
-                        # Check if URL might be a video URL
-                        if any(ext in url.lower() for ext in ['.m3u8', '.mp4', '.ts', '.m4v', '.avi', '.mkv']):
-                            # Try to determine resolution from URL
-                            resolution = 720  # Default resolution
-                            if '1280x720' in url or '1080' in url:
-                                resolution = 1080
-                            elif '842x480' in url or '720' in url:
-                                resolution = 720
-                            elif '640x360' in url or '360' in url:
-                                resolution = 360
-                            
-                            video_urls.append({
-                                'url': str(url),
-                                'resolution': resolution,
-                                'bandwidth': resolution * 1000
-                            })
-                    
+            if eval_line:
+                # Decode eval content
+                decoded_content = self.decode_eval(eval_line)
+                if decoded_content:
+                    # Extract video URLs from decoded content
+                    video_urls, _, _ = self.extract_video_info(decoded_content)
                     if video_urls:
-                        # Sort by resolution
-                        video_urls.sort(key=lambda x: x['resolution'], reverse=True)
                         return video_urls
-                
-                # Try to find URLs in script tags
-                soup = BeautifulSoup(response.text, 'html.parser')
-                script_tags = soup.find_all('script')
-                for script in script_tags:
-                    script_content = script.string
-                    if script_content:
-                        # Try to find m3u8 URLs in script content
-                        url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', script_content)
-                        if url_matches:
-                            print(f"Found {len(url_matches)} m3u8 URLs in script tags")
-                            # Create video URL objects
-                            video_urls = []
-                            for url in url_matches:
-                                # Try to determine resolution from URL
-                                resolution = 720  # Default resolution
-                                if '1280x720' in url or '1080' in url:
-                                    resolution = 1080
-                                elif '842x480' in url or '720' in url:
-                                    resolution = 720
-                                elif '640x360' in url or '360' in url:
-                                    resolution = 360
-                                
-                                video_urls.append({
-                                    'url': str(url),
-                                    'resolution': resolution,
-                                    'bandwidth': resolution * 1000
-                                })
-                            
-                            # Sort by resolution
-                            video_urls.sort(key=lambda x: x['resolution'], reverse=True)
-                            return video_urls
-                
-                raise ValueError("Failed to decode eval content and no m3u8 URLs found in the page")
-
-            # Extract video URLs and info
-            video_urls, thumbnail, duration = self.extract_video_info(decoded_content)
             
-            if not video_urls:
-                print("No video URLs found in decoded content, trying direct URL extraction")
-                # Try to find m3u8 URLs directly in the decoded content
-                url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', decoded_content)
-                if url_matches:
-                    print(f"Found {len(url_matches)} m3u8 URLs in the decoded content")
-                    # Create video URL objects
-                    video_urls = []
-                    for url in url_matches:
-                        # Try to determine resolution from URL
-                        resolution = 720  # Default resolution
-                        if '1280x720' in url or '1080' in url:
-                            resolution = 1080
-                        elif '842x480' in url or '720' in url:
-                            resolution = 720
-                        elif '640x360' in url or '360' in url:
-                            resolution = 360
-                        
-                        video_urls.append({
-                            'url': str(url),
-                            'resolution': resolution,
-                            'bandwidth': resolution * 1000
-                        })
-                    
-                    # Sort by resolution
-                    video_urls.sort(key=lambda x: x['resolution'], reverse=True)
-                    return video_urls
-                
-                # Try to find URLs with a more lenient pattern
-                url_matches = re.findall(r'https://[^\'"\s]+', decoded_content)
-                if url_matches:
-                    print(f"Found {len(url_matches)} potential URLs in the decoded content")
-                    # Filter for URLs that might be video-related
-                    video_urls = []
-                    for url in url_matches:
-                        # Check if URL might be a video URL
-                        if any(ext in url.lower() for ext in ['.m3u8', '.mp4', '.ts', '.m4v', '.avi', '.mkv']):
-                            # Try to determine resolution from URL
+            # If still no URLs found, try to find them in the page source
+            soup = BeautifulSoup(response.text, 'html.parser')
+            scripts = soup.find_all('script')
+            for script in scripts:
+                if script.string and 'source' in script.string:
+                    # Try to extract URLs from script content
+                    url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', script.string)
+                    if url_matches:
+                        video_urls = []
+                        for url in url_matches:
                             resolution = 720  # Default resolution
                             if '1280x720' in url or '1080' in url:
                                 resolution = 1080
@@ -657,76 +484,14 @@ class BohepDownloader:
                                 'resolution': resolution,
                                 'bandwidth': resolution * 1000
                             })
-                    
-                    if video_urls:
-                        # Sort by resolution
+                        
                         video_urls.sort(key=lambda x: x['resolution'], reverse=True)
                         return video_urls
-                
-                # Try to find m3u8 URLs directly in the page content as a last resort
-                url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', response.text)
-                if url_matches:
-                    print(f"Found {len(url_matches)} m3u8 URLs directly in the page content")
-                    # Create video URL objects
-                    video_urls = []
-                    for url in url_matches:
-                        # Try to determine resolution from URL
-                        resolution = 720  # Default resolution
-                        if '1280x720' in url or '1080' in url:
-                            resolution = 1080
-                        elif '842x480' in url or '720' in url:
-                            resolution = 720
-                        elif '640x360' in url or '360' in url:
-                            resolution = 360
-                        
-                        video_urls.append({
-                            'url': str(url),
-                            'resolution': resolution,
-                            'bandwidth': resolution * 1000
-                        })
-                    
-                    # Sort by resolution
-                    video_urls.sort(key=lambda x: x['resolution'], reverse=True)
-                    return video_urls
-                
-                raise ValueError("No video URLs found in decoded content or page")
-
-            # Ensure each URL info is a proper dictionary
-            valid_urls = []
-            for url_info in video_urls:
-                # Rigorous check to ensure it's a dict with required keys and types
-                if isinstance(url_info, dict) and \
-                   'resolution' in url_info and isinstance(url_info['resolution'], int) and \
-                   'url' in url_info and isinstance(url_info['url'], str):
-                    valid_urls.append({
-                        'resolution': url_info['resolution'],
-                        'url': url_info['url'],
-                        'bandwidth': int(url_info.get('bandwidth', 0))
-                    })
-                # Skip any item that doesn't strictly match the expected format
-
-            # Sort by resolution - Now sorting only confirmed valid dictionaries
-            try:
-                valid_urls.sort(key=lambda x: x['resolution'], reverse=True)
-            except KeyError as e:
-                # This shouldn't happen with the checks above, but adding safety
-                raise ValueError(f"Error sorting video URLs: {e}")
-            except TypeError as e:
-                # This shouldn't happen with the checks above, but adding safety
-                raise ValueError(f"Error sorting video URLs (type issue): {e}")
-
-            print(f"\nFound {len(valid_urls)} video qualities:")
-            for url_info in valid_urls:
-                # Safety check kept, though less likely needed now
-                if isinstance(url_info, dict) and 'resolution' in url_info and 'url' in url_info:
-                    print(f"{url_info['resolution']}p: {url_info['url']}")
-                # else: Removed the debug print for malformed items
-
-            return valid_urls.copy() # Return a copy for safety
-
-        except requests.RequestException as e:
-            raise Exception(f"Failed to fetch page: {str(e)}")
+            
+            raise ValueError("No video URLs found in the page")
+            
         except Exception as e:
+            print(f"Error getting m3u8 URL: {e}")
             raise
 
     def get_available_resolutions(self, m3u8_url):
@@ -797,172 +562,215 @@ class BohepDownloader:
         else:
             raise Exception(f"Failed to fetch content: HTTP {response.status_code}")
 
-    def download_segments(self, base_url, segments, output_path):
-        """Download segments and combine them into a video file."""
-        temp_dir = None
+    def download_segments(self, segments, output_file, progress_callback=None):
+        """Download video segments and combine them."""
+        temp_dir = Path(tempfile.mkdtemp())
         try:
-            temp_dir = tempfile.mkdtemp()
-            segment_files = []
-            failed_segments = []
+            # Create a single progress bar for all segments
+            total_segments = len(segments)
+            pbar = tqdm(total=total_segments, desc="Downloading segments", unit="segment", position=0, leave=True)
             
-            print(f"\nDownloading {len(segments)} segments...")
+            # Variables for progress tracking
+            completed_segments = 0
+            start_time = time.time()
             
-            def download_segment(args):
-                i, segment = args
-                if not segment.uri.startswith('http'):
-                    segment_url = base_url + segment.uri
-                else:
-                    segment_url = segment.uri
+            # Download segments concurrently
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = []
+                for i, segment in enumerate(segments):
+                    if self.is_cancelled():
+                        break
+                    
+                    segment_file = temp_dir / f"segment_{i:05d}.ts"
+                    futures.append(
+                        executor.submit(
+                            self.download_segment,
+                            segment,
+                            segment_file,
+                            None  # Don't pass progress_callback to download_segment
+                        )
+                    )
                 
-                # Try both .ts and .jpeg extensions
-                extensions = ['.ts', '.jpeg', '.mp4']
-                segment_data = None
-                
-                for ext in extensions:
-                    try:
-                        url = segment_url.rsplit('.', 1)[0] + ext
-                        try:
-                            segment_data = self.fetch_with_range(url)
-                            if segment_data:
-                                break
-                        except Exception:
-                            # Try without range header
-                            self.session.headers.pop('Range', None)
-                            response = self.session.get(url)
-                            if response.status_code == 200 and len(response.content) > 0:
-                                segment_data = response.content
-                                break
-                    except Exception:
-                        continue
-                
-                if segment_data:
-                    segment_file = os.path.join(temp_dir, f"segment_{i:04d}.ts")
-                    with open(segment_file, 'wb') as f:
-                        f.write(segment_data)
-                    return i, segment_file
-                else:
-                    return i, None
+                # Wait for all downloads to complete
+                for future in futures:
+                    if self.is_cancelled():
+                        break
+                    future.result()
+                    completed_segments += 1
+                    pbar.update(1)
+                    
+                    # Calculate speed and ETA
+                    elapsed_time = time.time() - start_time
+                    speed = completed_segments / elapsed_time if elapsed_time > 0 else 0
+                    remaining_segments = total_segments - completed_segments
+                    eta = remaining_segments / speed if speed > 0 else 0
+                    
+                    # Update GUI progress (0-90%)
+                    if progress_callback:
+                        percentage = (completed_segments / total_segments) * 90
+                        progress_callback({
+                            'percentage': percentage,
+                            'completed': completed_segments,
+                            'total': total_segments,
+                            'speed': speed,
+                            'eta': eta,
+                            'stage': 'download'
+                        })
             
-            # Create a list of arguments for each segment
-            segment_args = list(enumerate(segments, 1))
+            pbar.close()
             
-            # Use ThreadPoolExecutor for concurrent downloads
-            max_workers = min(20, len(segments))
-            executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
-            try:
-                # Submit all tasks and create a progress bar
-                futures = {executor.submit(download_segment, args): args[0] for args in segment_args}
-                
-                # Process completed downloads with progress bar
-                completed = 0
-                start_time = time.time()
-                with tqdm(total=len(segments), desc="Downloading segments") as pbar:
-                    for future in concurrent.futures.as_completed(futures):
-                        # Check if download was cancelled
-                        if self.cancelled:
-                            print("\nDownload cancelled by user")
-                            executor.shutdown(wait=False)
-                            raise Exception("Download cancelled by user")
-                            
-                        i, result = future.result()
-                        if result:
-                            segment_files.append((i, result))
-                        else:
-                            failed_segments.append(i)
-                        
-                        completed += 1
-                        elapsed_time = time.time() - start_time
-                        speed = completed / elapsed_time if elapsed_time > 0 else 0
-                        eta = (len(segments) - completed) / speed if speed > 0 else 0
-                        
-                        # Update progress callback with detailed information
-                        if self.progress_callback:
-                            progress_info = {
-                                'completed': completed,
-                                'total': len(segments),
-                                'percentage': (completed / len(segments)) * 100,
-                                'speed': speed,
-                                'eta': eta
-                            }
-                            self.progress_callback(progress_info)
-                        
-                        pbar.update(1)
-            finally:
-                # Ensure executor is properly shut down
-                executor.shutdown(wait=True)
+            if self.is_cancelled():
+                return
             
-            # Check if download was cancelled after all segments are processed
-            if self.cancelled:
-                raise Exception("Download cancelled by user")
-                
-            if failed_segments:
-                print(f"\nFailed to download segments: {failed_segments}")
-                raise Exception(f"Failed to download {len(failed_segments)} segments")
+            # Combine segments using FFmpeg
+            print("\nCombining segments...")
+            if progress_callback:
+                progress_callback({
+                    'percentage': 90,
+                    'completed': total_segments,
+                    'total': total_segments,
+                    'speed': 0,
+                    'eta': 0,
+                    'stage': 'combine'
+                })
             
-            # Sort segments by index before combining
-            segment_files.sort(key=lambda x: x[0])
-            segment_files = [f[1] for f in segment_files]
+            self.combine_segments(temp_dir, output_file, progress_callback)
             
-            print("\nCombining segments into final video...")
+        finally:
+            # Clean up temp directory
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def download_segment(self, segment, output_file, progress_callback=None):
+        """Download a single segment with progress tracking."""
+        try:
+            # Handle relative URLs by combining with base URL
+            segment_url = segment.uri
+            if not segment_url.startswith(('http://', 'https://')):
+                # Get base URL from the segment's base URI
+                base_url = segment.base_uri
+                if not base_url:
+                    raise ValueError("No base URL available for relative segment URL")
+                segment_url = base_url + segment_url
+
+            response = self.session.get(segment_url, stream=True)
+            response.raise_for_status()
             
-            # Create a file list for FFmpeg
-            file_list = os.path.join(temp_dir, "file_list.txt")
-            with open(file_list, 'w') as f:
-                for segment_file in segment_files:
-                    f.write(f"file '{segment_file}'\n")
+            total_size = int(response.headers.get('content-length', 0))
+            block_size = 8192
+            downloaded = 0
             
-            # Use FFmpeg to combine segments
-            try:
-                ffmpeg_cmd = [
-                    'ffmpeg', '-y',
-                    '-f', 'concat',
-                    '-safe', '0',
-                    '-i', file_list,
-                    '-c', 'copy',
-                    output_path
-                ]
-                
-                process = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
-                
-                if process.returncode != 0:
-                    raise Exception("Failed to combine segments with FFmpeg")
-                
-            except Exception as e:
-                # Fallback to direct file concatenation if FFmpeg fails
-                print("Falling back to direct file concatenation...")
-                with open(output_path, 'wb') as outfile:
-                    for segment_file in tqdm(segment_files, desc="Combining segments"):
-                        # Check if download was cancelled during merging
-                        if self.cancelled:
-                            raise Exception("Download cancelled by user")
-                            
-                        with open(segment_file, 'rb') as infile:
-                            outfile.write(infile.read())
+            # Download with progress tracking
+            with open(output_file, 'wb') as f:
+                for data in response.iter_content(block_size):
+                    if self.is_cancelled():
+                        break
+                    
+                    f.write(data)
+                    downloaded += len(data)
+                    
+                    if progress_callback and total_size:
+                        # Calculate segment progress (0-100%)
+                        segment_progress = (downloaded / total_size) * 100
+                        progress_callback({
+                            'percentage': segment_progress,
+                            'completed': downloaded,
+                            'total': total_size,
+                            'speed': 0,  # Speed is calculated in download_segments
+                            'eta': 0,    # ETA is calculated in download_segments
+                            'stage': 'segment'
+                        })
             
-            print("Cleaning up temporary files...")
-            for file in segment_files:
-                try:
-                    os.remove(file)
-                except:
-                    pass
-            try:
-                os.remove(file_list)
-                if temp_dir and os.path.exists(temp_dir):
-                    os.rmdir(temp_dir)
-            except:
-                pass
-            
-            print(f"\nDownload completed! File saved as: {output_path}")
+            return output_file
             
         except Exception as e:
-            print(f"Error downloading segments: {str(e)}")
-            # Clean up temp directory in case of error
-            if temp_dir and os.path.exists(temp_dir):
-                try:
-                    shutil.rmtree(temp_dir)
-                except:
-                    pass
-            raise
+            if self.is_cancelled():
+                raise ValueError("Download cancelled by user")
+            raise e
+
+    def combine_segments(self, temp_dir, output_file, progress_callback=None):
+        """Combine downloaded segments into a final video file."""
+        try:
+            # Get list of segment files in order
+            segment_files = sorted(temp_dir.glob("segment_*.ts"))
+            if not segment_files:
+                raise ValueError("No segments found to combine")
+            
+            # Create a file list for FFmpeg
+            file_list = temp_dir / "file_list.txt"
+            with open(file_list, 'w') as f:
+                for segment in segment_files:
+                    f.write(f"file '{segment}'\n")
+            
+            print("\nCombining segments with FFmpeg...")
+            
+            # Use FFmpeg to combine segments
+            ffmpeg_cmd = [
+                "ffmpeg",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", str(file_list),
+                "-c", "copy",
+                "-bsf:a", "aac_adtstoasc",
+                "-movflags", "+faststart",
+                str(output_file)
+            ]
+            
+            process = subprocess.Popen(
+                ffmpeg_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            # Create progress bar for FFmpeg
+            pbar = tqdm(total=100, desc="Combining segments", unit="%", position=0, leave=True)
+            last_progress = 90  # Start from where download_segments left off
+            
+            # Monitor FFmpeg progress
+            while True:
+                if self.is_cancelled():
+                    process.terminate()
+                    break
+                
+                line = process.stderr.readline()
+                if not line and process.poll() is not None:
+                    break
+                
+                if progress_callback:
+                    # Update progress from 90% to 100%
+                    current_progress = min(last_progress + 1, 100)
+                    progress_callback({
+                        'percentage': current_progress,
+                        'completed': len(segment_files),
+                        'total': len(segment_files),
+                        'speed': 0,
+                        'eta': 0,
+                        'stage': 'combine'
+                    })
+                    pbar.update(current_progress - last_progress)
+                    last_progress = current_progress
+            
+            pbar.close()
+            
+            if process.returncode != 0:
+                raise ValueError("Failed to combine video segments")
+            
+            print("\nVideo combination completed!")
+            
+            # Ensure we reach 100% at the end
+            if progress_callback:
+                progress_callback({
+                    'percentage': 100,
+                    'completed': len(segment_files),
+                    'total': len(segment_files),
+                    'speed': 0,
+                    'eta': 0,
+                    'stage': 'complete'
+                })
+            
+        except Exception as e:
+            if self.is_cancelled():
+                raise ValueError("Download cancelled by user")
+            raise e
 
     def download_video(self, url, output_path):
         """Download video using segment-by-segment approach."""
@@ -989,12 +797,25 @@ class BohepDownloader:
             except UnicodeDecodeError:
                 playlist_text = playlist_content.decode('utf-8', errors='ignore')
             
+            # Load playlist and set base URI
             playlist = m3u8.loads(playlist_text)
+            
+            # Ensure all segments have absolute URLs
+            for segment in playlist.segments:
+                if not segment.uri.startswith(('http://', 'https://')):
+                    segment.uri = base_url + segment.uri
+                segment.base_uri = base_url
+            
             if not playlist.segments:
                 raise Exception("No segments found in playlist")
             
+            # Create output directory if it doesn't exist
+            output_dir = os.path.dirname(output_path)
+            if output_dir and not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+            
             # Download and combine segments
-            self.download_segments(base_url, playlist.segments, output_path)
+            self.download_segments(playlist.segments, output_path, self.progress_callback)
             
         except Exception as e:
             raise Exception(f"Failed to download video: {str(e)}")
