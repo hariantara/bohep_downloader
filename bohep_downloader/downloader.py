@@ -139,48 +139,221 @@ class BohepDownloader:
             # Find the eval line
             eval_match = re.search(r'eval\((.*)\)', encoded_text)
             if not eval_match:
+                print("No eval content found in the text")
+                # Try to find m3u8 URLs directly in the encoded text
+                url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', encoded_text)
+                if url_matches:
+                    print(f"Found {len(url_matches)} URLs directly in the encoded text")
+                    return encoded_text
                 return None
 
             # Get the content inside eval()
             eval_content = eval_match.group(1)
+            print(f"Found eval content: {eval_content[:100]}...")  # Print first 100 chars for debugging
 
             # If it's a function definition, extract it
             if eval_content.startswith('function'):
                 try:
+                    # Get the application path
+                    app_path = None
+                    if getattr(sys, 'frozen', False):
+                        # Running in a bundle
+                        app_path = os.path.dirname(sys.executable)
+                        print(f"Running in bundle, app_path: {app_path}")
+                    else:
+                        # Running in normal Python environment
+                        app_path = os.path.dirname(os.path.abspath(__file__))
+                        print(f"Running in normal environment, app_path: {app_path}")
+                    
                     # Try to find the JavaScript file in multiple locations
                     js_file_paths = [
-                        'decode_packed.js',  # Current directory
-                        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'decode_packed.js'),  # Package directory
-                        os.path.join(os.path.dirname(os.path.abspath(sys.executable)), 'decode_packed.js'),  # Executable directory
+                        # Current directory
+                        'decode_packed.js',
+                        
+                        # Package directory
+                        os.path.join(app_path, 'decode_packed.js'),
+                        
+                        # Resources directory in app bundle
+                        os.path.join(app_path, '..', 'Resources', 'decode_packed.js'),
+                        os.path.join(app_path, '..', '..', 'Resources', 'decode_packed.js'),
+                        os.path.join(app_path, '..', '..', '..', 'Resources', 'decode_packed.js'),
+                        
+                        # MacOS directory in app bundle
+                        os.path.join(app_path, 'decode_packed.js'),
+                        os.path.join(app_path, '..', 'decode_packed.js'),
+                        
+                        # Development environment paths
+                        os.path.join(os.getcwd(), 'decode_packed.js'),
+                        os.path.join(os.getcwd(), 'bohep_downloader', 'decode_packed.js'),
+                        os.path.join(os.getcwd(), '..', 'decode_packed.js'),
+                        os.path.join(os.getcwd(), '..', 'bohep_downloader', 'decode_packed.js'),
+                        
+                        # Additional paths for packaged app
+                        os.path.join(os.path.dirname(os.path.abspath(sys.executable)), 'decode_packed.js'),
+                        os.path.join(os.path.dirname(os.path.abspath(sys.executable)), '..', 'Resources', 'decode_packed.js'),
+                        os.path.join(os.path.dirname(os.path.abspath(sys.executable)), '..', '..', 'Resources', 'decode_packed.js'),
+                        os.path.join(os.path.dirname(os.path.abspath(sys.executable)), '..', '..', '..', 'Resources', 'decode_packed.js'),
                     ]
+                    
+                    # Print all paths being checked
+                    print("Checking for decode_packed.js in the following locations:")
+                    for path in js_file_paths:
+                        print(f"  - {path} (exists: {os.path.exists(path)})")
                     
                     js_file_path = None
                     for path in js_file_paths:
                         if os.path.exists(path):
                             js_file_path = path
+                            print(f"Using JavaScript file at: {js_file_path}")
                             break
                     
                     if not js_file_path:
-                        print("Error: Could not find decode_packed.js file")
+                        print("Error: Could not find decode_packed.js file in any of the expected locations")
+                        
+                        # Try to create the file in a known location
+                        try:
+                            # Create Resources directory if it doesn't exist
+                            resources_dir = os.path.join(app_path, '..', 'Resources')
+                            if not os.path.exists(resources_dir):
+                                os.makedirs(resources_dir)
+                            
+                            # Copy the file from the package to Resources
+                            source_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'decode_packed.js')
+                            target_file = os.path.join(resources_dir, 'decode_packed.js')
+                            
+                            if os.path.exists(source_file):
+                                print(f"Copying decode_packed.js from {source_file} to {target_file}")
+                                shutil.copy(source_file, target_file)
+                                js_file_path = target_file
+                            else:
+                                print(f"Source file not found: {source_file}")
+                        except Exception as e:
+                            print(f"Error creating decode_packed.js: {e}")
+                        
+                        # Try to extract URLs directly from the encoded text
+                        url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', encoded_text)
+                        if url_matches:
+                            print(f"Found {len(url_matches)} URLs directly in the encoded text")
+                            return encoded_text
+                        
+                        # Try to extract URLs with a more lenient pattern
+                        url_matches = re.findall(r'https://[^\'"\s]+', encoded_text)
+                        if url_matches:
+                            print(f"Found {len(url_matches)} potential URLs in the encoded text")
+                            return encoded_text
+                            
                         return None
                     
                     # Run Node.js to decode
-                    result = subprocess.run(['node', js_file_path, eval_content], 
-                                         capture_output=True, 
-                                         text=True)
-                    
-                    if result.returncode == 0 and result.stdout:
-                        decoded = result.stdout.strip()
-                        return decoded
-                    else:
-                        # Try to extract URLs directly from the error message or stdout
-                        content = result.stderr or result.stdout
-                        url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', content)
+                    print(f"Running Node.js with file: {js_file_path}")
+                    try:
+                        # Check if Node.js is available
+                        node_path = None
+                        for path in os.environ.get('PATH', '').split(os.pathsep):
+                            potential_node = os.path.join(path, 'node')
+                            if os.path.exists(potential_node) and os.access(potential_node, os.X_OK):
+                                node_path = potential_node
+                                break
+                        
+                        if not node_path:
+                            print("Node.js not found in PATH, trying to find it in common locations")
+                            common_node_paths = [
+                                '/usr/local/bin/node',
+                                '/usr/bin/node',
+                                '/opt/homebrew/bin/node',
+                                os.path.expanduser('~/.nvm/versions/node/current/bin/node'),
+                                os.path.expanduser('~/.nvm/versions/node/lts/bin/node'),
+                            ]
+                            
+                            for path in common_node_paths:
+                                if os.path.exists(path) and os.access(path, os.X_OK):
+                                    node_path = path
+                                    print(f"Found Node.js at: {node_path}")
+                                    break
+                        
+                        if not node_path:
+                            print("Node.js not found, trying to extract URLs directly")
+                            # Try to extract URLs directly from the encoded text
+                            url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', encoded_text)
+                            if url_matches:
+                                print(f"Found {len(url_matches)} URLs directly in the encoded text")
+                                return encoded_text
+                            
+                            # Try to extract URLs with a more lenient pattern
+                            url_matches = re.findall(r'https://[^\'"\s]+', encoded_text)
+                            if url_matches:
+                                print(f"Found {len(url_matches)} potential URLs in the encoded text")
+                                return encoded_text
+                                
+                            return None
+                        
+                        # Run Node.js with the file
+                        result = subprocess.run([node_path, js_file_path, eval_content], 
+                                             capture_output=True, 
+                                             text=True)
+                        
+                        if result.returncode == 0 and result.stdout:
+                            decoded = result.stdout.strip()
+                            print(f"Successfully decoded content: {decoded[:100]}...")  # Print first 100 chars
+                            return decoded
+                        else:
+                            # Try to extract URLs directly from the error message or stdout
+                            content = result.stderr or result.stdout
+                            print(f"Node.js output: {content[:200]}...")  # Print first 200 chars
+                            url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', content)
+                            if url_matches:
+                                print(f"Found {len(url_matches)} URLs in Node.js output")
+                                return content
+                            
+                            # Try to extract URLs with a more lenient pattern
+                            url_matches = re.findall(r'https://[^\'"\s]+', content)
+                            if url_matches:
+                                print(f"Found {len(url_matches)} potential URLs in Node.js output")
+                                return content
+                            
+                            # Try to extract URLs directly from the encoded text
+                            url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', encoded_text)
+                            if url_matches:
+                                print(f"Found {len(url_matches)} URLs directly in the encoded text")
+                                return encoded_text
+                            
+                            # Try to extract URLs with a more lenient pattern
+                            url_matches = re.findall(r'https://[^\'"\s]+', encoded_text)
+                            if url_matches:
+                                print(f"Found {len(url_matches)} potential URLs in the encoded text")
+                                return encoded_text
+                                
+                            print("No URLs found in Node.js output or encoded text")
+                            return None
+                    except subprocess.SubprocessError as e:
+                        print(f"Error running Node.js: {e}")
+                        # Try to extract URLs directly from the encoded text
+                        url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', encoded_text)
                         if url_matches:
-                            return content
+                            print(f"Found {len(url_matches)} URLs directly in the encoded text")
+                            return encoded_text
+                        
+                        # Try to extract URLs with a more lenient pattern
+                        url_matches = re.findall(r'https://[^\'"\s]+', encoded_text)
+                        if url_matches:
+                            print(f"Found {len(url_matches)} potential URLs in the encoded text")
+                            return encoded_text
+                            
                         return None
                 except Exception as e:
                     print(f"Error decoding eval content: {e}")
+                    # Try to extract URLs directly from the encoded text
+                    url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', encoded_text)
+                    if url_matches:
+                        print(f"Found {len(url_matches)} URLs directly in the encoded text")
+                        return encoded_text
+                    
+                    # Try to extract URLs with a more lenient pattern
+                    url_matches = re.findall(r'https://[^\'"\s]+', encoded_text)
+                    if url_matches:
+                        print(f"Found {len(url_matches)} potential URLs in the encoded text")
+                        return encoded_text
+                        
                     return None
 
             # If it's base64 encoded
@@ -189,18 +362,51 @@ class BohepDownloader:
                 if base64_match:
                     try:
                         decoded = base64.b64decode(base64_match.group(1)).decode('utf-8')
+                        print(f"Successfully decoded base64 content: {decoded[:100]}...")  # Print first 100 chars
                         return decoded
-                    except:
+                    except Exception as e:
+                        print(f"Error decoding base64 content: {e}")
+                        # Try to extract URLs directly from the encoded text
+                        url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', encoded_text)
+                        if url_matches:
+                            print(f"Found {len(url_matches)} URLs directly in the encoded text")
+                            return encoded_text
                         return None
 
+            # Try to extract URLs directly from the eval content
+            url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', eval_content)
+            if url_matches:
+                print(f"Found {len(url_matches)} URLs directly in the eval content")
+                return eval_content
+            
+            # Try to extract URLs with a more lenient pattern
+            url_matches = re.findall(r'https://[^\'"\s]+', eval_content)
+            if url_matches:
+                print(f"Found {len(url_matches)} potential URLs in the eval content")
+                return eval_content
+
+            print("Unrecognized eval content format")
             return None
         except Exception as e:
             print(f"Error in decode_eval: {e}")
+            # Try to extract URLs directly from the encoded text
+            url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', encoded_text)
+            if url_matches:
+                print(f"Found {len(url_matches)} URLs directly in the encoded text")
+                return encoded_text
+            
+            # Try to extract URLs with a more lenient pattern
+            url_matches = re.findall(r'https://[^\'"\s]+', encoded_text)
+            if url_matches:
+                print(f"Found {len(url_matches)} potential URLs in the encoded text")
+                return encoded_text
+                
             return None
 
     def get_m3u8_url(self, page_url):
         """Get the m3u8 playlist URL from the page."""
         try:
+            print(f"Fetching page: {page_url}")
             response = self.session.get(page_url)
             response.raise_for_status()
             
@@ -210,21 +416,280 @@ class BohepDownloader:
             for line in lines:
                 if 'eval(' in line:
                     eval_line = line.strip()
+                    print(f"Found eval line: {eval_line[:100]}...")  # Print first 100 chars
                     break
 
             if not eval_line:
-                raise ValueError("Could not find eval content in the page")
+                print("Could not find eval content in the page, trying direct URL extraction")
+                # Try to find m3u8 URLs directly in the page content
+                url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', response.text)
+                if url_matches:
+                    print(f"Found {len(url_matches)} m3u8 URLs directly in the page content")
+                    # Create video URL objects
+                    video_urls = []
+                    for url in url_matches:
+                        # Try to determine resolution from URL
+                        resolution = 720  # Default resolution
+                        if '1280x720' in url or '1080' in url:
+                            resolution = 1080
+                        elif '842x480' in url or '720' in url:
+                            resolution = 720
+                        elif '640x360' in url or '360' in url:
+                            resolution = 360
+                        
+                        video_urls.append({
+                            'url': str(url),
+                            'resolution': resolution,
+                            'bandwidth': resolution * 1000
+                        })
+                    
+                    # Sort by resolution
+                    video_urls.sort(key=lambda x: x['resolution'], reverse=True)
+                    return video_urls
+                
+                # Try to find URLs with a more lenient pattern
+                url_matches = re.findall(r'https://[^\'"\s]+', response.text)
+                if url_matches:
+                    print(f"Found {len(url_matches)} potential URLs in the page content")
+                    # Filter for URLs that might be video-related
+                    video_urls = []
+                    for url in url_matches:
+                        # Check if URL might be a video URL
+                        if any(ext in url.lower() for ext in ['.m3u8', '.mp4', '.ts', '.m4v', '.avi', '.mkv']):
+                            # Try to determine resolution from URL
+                            resolution = 720  # Default resolution
+                            if '1280x720' in url or '1080' in url:
+                                resolution = 1080
+                            elif '842x480' in url or '720' in url:
+                                resolution = 720
+                            elif '640x360' in url or '360' in url:
+                                resolution = 360
+                            
+                            video_urls.append({
+                                'url': str(url),
+                                'resolution': resolution,
+                                'bandwidth': resolution * 1000
+                            })
+                    
+                    if video_urls:
+                        # Sort by resolution
+                        video_urls.sort(key=lambda x: x['resolution'], reverse=True)
+                        return video_urls
+                
+                # Try to find URLs in script tags
+                soup = BeautifulSoup(response.text, 'html.parser')
+                script_tags = soup.find_all('script')
+                for script in script_tags:
+                    script_content = script.string
+                    if script_content:
+                        # Try to find m3u8 URLs in script content
+                        url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', script_content)
+                        if url_matches:
+                            print(f"Found {len(url_matches)} m3u8 URLs in script tags")
+                            # Create video URL objects
+                            video_urls = []
+                            for url in url_matches:
+                                # Try to determine resolution from URL
+                                resolution = 720  # Default resolution
+                                if '1280x720' in url or '1080' in url:
+                                    resolution = 1080
+                                elif '842x480' in url or '720' in url:
+                                    resolution = 720
+                                elif '640x360' in url or '360' in url:
+                                    resolution = 360
+                                
+                                video_urls.append({
+                                    'url': str(url),
+                                    'resolution': resolution,
+                                    'bandwidth': resolution * 1000
+                                })
+                            
+                            # Sort by resolution
+                            video_urls.sort(key=lambda x: x['resolution'], reverse=True)
+                            return video_urls
+                
+                raise ValueError("Could not find eval content or m3u8 URLs in the page")
 
             decoded_content = self.decode_eval(eval_line)
             
             if not decoded_content:
-                raise ValueError("Failed to decode eval content")
+                print("Failed to decode eval content, trying direct URL extraction")
+                # Try to find m3u8 URLs directly in the page content
+                url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', response.text)
+                if url_matches:
+                    print(f"Found {len(url_matches)} m3u8 URLs directly in the page content")
+                    # Create video URL objects
+                    video_urls = []
+                    for url in url_matches:
+                        # Try to determine resolution from URL
+                        resolution = 720  # Default resolution
+                        if '1280x720' in url or '1080' in url:
+                            resolution = 1080
+                        elif '842x480' in url or '720' in url:
+                            resolution = 720
+                        elif '640x360' in url or '360' in url:
+                            resolution = 360
+                        
+                        video_urls.append({
+                            'url': str(url),
+                            'resolution': resolution,
+                            'bandwidth': resolution * 1000
+                        })
+                    
+                    # Sort by resolution
+                    video_urls.sort(key=lambda x: x['resolution'], reverse=True)
+                    return video_urls
+                
+                # Try to find URLs with a more lenient pattern
+                url_matches = re.findall(r'https://[^\'"\s]+', response.text)
+                if url_matches:
+                    print(f"Found {len(url_matches)} potential URLs in the page content")
+                    # Filter for URLs that might be video-related
+                    video_urls = []
+                    for url in url_matches:
+                        # Check if URL might be a video URL
+                        if any(ext in url.lower() for ext in ['.m3u8', '.mp4', '.ts', '.m4v', '.avi', '.mkv']):
+                            # Try to determine resolution from URL
+                            resolution = 720  # Default resolution
+                            if '1280x720' in url or '1080' in url:
+                                resolution = 1080
+                            elif '842x480' in url or '720' in url:
+                                resolution = 720
+                            elif '640x360' in url or '360' in url:
+                                resolution = 360
+                            
+                            video_urls.append({
+                                'url': str(url),
+                                'resolution': resolution,
+                                'bandwidth': resolution * 1000
+                            })
+                    
+                    if video_urls:
+                        # Sort by resolution
+                        video_urls.sort(key=lambda x: x['resolution'], reverse=True)
+                        return video_urls
+                
+                # Try to find URLs in script tags
+                soup = BeautifulSoup(response.text, 'html.parser')
+                script_tags = soup.find_all('script')
+                for script in script_tags:
+                    script_content = script.string
+                    if script_content:
+                        # Try to find m3u8 URLs in script content
+                        url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', script_content)
+                        if url_matches:
+                            print(f"Found {len(url_matches)} m3u8 URLs in script tags")
+                            # Create video URL objects
+                            video_urls = []
+                            for url in url_matches:
+                                # Try to determine resolution from URL
+                                resolution = 720  # Default resolution
+                                if '1280x720' in url or '1080' in url:
+                                    resolution = 1080
+                                elif '842x480' in url or '720' in url:
+                                    resolution = 720
+                                elif '640x360' in url or '360' in url:
+                                    resolution = 360
+                                
+                                video_urls.append({
+                                    'url': str(url),
+                                    'resolution': resolution,
+                                    'bandwidth': resolution * 1000
+                                })
+                            
+                            # Sort by resolution
+                            video_urls.sort(key=lambda x: x['resolution'], reverse=True)
+                            return video_urls
+                
+                raise ValueError("Failed to decode eval content and no m3u8 URLs found in the page")
 
             # Extract video URLs and info
             video_urls, thumbnail, duration = self.extract_video_info(decoded_content)
             
             if not video_urls:
-                raise ValueError("No video URLs found in decoded content")
+                print("No video URLs found in decoded content, trying direct URL extraction")
+                # Try to find m3u8 URLs directly in the decoded content
+                url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', decoded_content)
+                if url_matches:
+                    print(f"Found {len(url_matches)} m3u8 URLs in the decoded content")
+                    # Create video URL objects
+                    video_urls = []
+                    for url in url_matches:
+                        # Try to determine resolution from URL
+                        resolution = 720  # Default resolution
+                        if '1280x720' in url or '1080' in url:
+                            resolution = 1080
+                        elif '842x480' in url or '720' in url:
+                            resolution = 720
+                        elif '640x360' in url or '360' in url:
+                            resolution = 360
+                        
+                        video_urls.append({
+                            'url': str(url),
+                            'resolution': resolution,
+                            'bandwidth': resolution * 1000
+                        })
+                    
+                    # Sort by resolution
+                    video_urls.sort(key=lambda x: x['resolution'], reverse=True)
+                    return video_urls
+                
+                # Try to find URLs with a more lenient pattern
+                url_matches = re.findall(r'https://[^\'"\s]+', decoded_content)
+                if url_matches:
+                    print(f"Found {len(url_matches)} potential URLs in the decoded content")
+                    # Filter for URLs that might be video-related
+                    video_urls = []
+                    for url in url_matches:
+                        # Check if URL might be a video URL
+                        if any(ext in url.lower() for ext in ['.m3u8', '.mp4', '.ts', '.m4v', '.avi', '.mkv']):
+                            # Try to determine resolution from URL
+                            resolution = 720  # Default resolution
+                            if '1280x720' in url or '1080' in url:
+                                resolution = 1080
+                            elif '842x480' in url or '720' in url:
+                                resolution = 720
+                            elif '640x360' in url or '360' in url:
+                                resolution = 360
+                            
+                            video_urls.append({
+                                'url': str(url),
+                                'resolution': resolution,
+                                'bandwidth': resolution * 1000
+                            })
+                    
+                    if video_urls:
+                        # Sort by resolution
+                        video_urls.sort(key=lambda x: x['resolution'], reverse=True)
+                        return video_urls
+                
+                # Try to find m3u8 URLs directly in the page content as a last resort
+                url_matches = re.findall(r'https://[^\'"\s]+\.m3u8', response.text)
+                if url_matches:
+                    print(f"Found {len(url_matches)} m3u8 URLs directly in the page content")
+                    # Create video URL objects
+                    video_urls = []
+                    for url in url_matches:
+                        # Try to determine resolution from URL
+                        resolution = 720  # Default resolution
+                        if '1280x720' in url or '1080' in url:
+                            resolution = 1080
+                        elif '842x480' in url or '720' in url:
+                            resolution = 720
+                        elif '640x360' in url or '360' in url:
+                            resolution = 360
+                        
+                        video_urls.append({
+                            'url': str(url),
+                            'resolution': resolution,
+                            'bandwidth': resolution * 1000
+                        })
+                    
+                    # Sort by resolution
+                    video_urls.sort(key=lambda x: x['resolution'], reverse=True)
+                    return video_urls
+                
+                raise ValueError("No video URLs found in decoded content or page")
 
             # Ensure each URL info is a proper dictionary
             valid_urls = []

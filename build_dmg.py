@@ -26,6 +26,7 @@ def create_app_bundle():
         "--debug=all",  # Enable debug mode
         "--icon=assets/icon.icns",
         "--add-data=assets:assets",
+        "--add-data=bohep_downloader/decode_packed.js:Resources",  # Add decode_packed.js to Resources
         "--target-arch=arm64",  # For Apple Silicon
         "--collect-all=customtkinter",  # Ensure customtkinter is fully bundled
         "--collect-all=tkinter",  # Ensure tkinter is fully bundled
@@ -44,6 +45,16 @@ def create_app_bundle():
     # Set executable permissions
     os.system(f'chmod -R 755 "{app_path}"')
     os.system(f'chmod +x "{app_path}/Contents/MacOS/"*')
+    
+    # Copy decode_packed.js to multiple locations to ensure it's found
+    resources_path = app_path / "Contents/Resources"
+    macos_path = app_path / "Contents/MacOS"
+    
+    # Copy to Resources directory
+    shutil.copy("bohep_downloader/decode_packed.js", resources_path / "decode_packed.js")
+    
+    # Copy to MacOS directory
+    shutil.copy("bohep_downloader/decode_packed.js", macos_path / "decode_packed.js")
     
     # Create Info.plist if it doesn't exist
     info_plist = app_path / "Contents/Info.plist"
@@ -79,6 +90,8 @@ def create_app_bundle():
     <dict>
         <key>PYTHONPATH</key>
         <string>@executable_path/../Resources/lib/python3.13/site-packages</string>
+        <key>NODE_PATH</key>
+        <string>@executable_path/../Resources</string>
     </dict>
 </dict>
 </plist>''')

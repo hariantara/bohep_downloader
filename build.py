@@ -115,6 +115,7 @@ def build_executable():
         '--collect-all', 'bohep_downloader',  # Collect all package data
         '--add-data', f'bohep_downloader/decode_packed.js{os.pathsep}.',  # Also include JS file in root
         '--runtime-hook', 'runtime_hook.py',  # Add runtime hook
+        '--windowed',  # Use windowed mode for GUI
     ]
     
     # Platform-specific options
@@ -122,6 +123,9 @@ def build_executable():
         pyinstaller_options.extend([
             '--icon', 'icon.icns',  # macOS icon
             '--target-architecture', 'arm64' if arch == 'arm64' else 'x86_64',  # Target architecture
+            '--add-data', f'bohep_downloader/decode_packed.js{os.pathsep}Resources',  # Include JS file in Resources
+            '--add-data', f'bohep_downloader/decode_packed.js{os.pathsep}MacOS',  # Include JS file in MacOS
+            '--add-data', f'bohep_downloader/decode_packed.js{os.pathsep}bohep_downloader',  # Include JS file in package
         ])
     elif system == 'linux':
         pyinstaller_options.extend([
@@ -132,8 +136,8 @@ def build_executable():
             '--icon', 'icon.ico',  # Windows icon
         ])
     
-    # Add the main script
-    pyinstaller_options.append('bohep_downloader/cli.py')
+    # Add the main script - use gui.py instead of cli.py
+    pyinstaller_options.append('bohep_downloader/gui.py')
     
     # Run PyInstaller
     subprocess.run(['pyinstaller'] + pyinstaller_options)
@@ -149,14 +153,131 @@ def build_executable():
     if system == 'windows':
         executable_name += '.exe'
     
-    executable_path = os.path.join('dist', executable_name)
-    if os.path.exists(executable_path):
-        shutil.copy(executable_path, os.path.join(dist_dir, executable_name))
-    
-    # Also copy the JS file directly to the distribution directory
-    js_file_path = os.path.join('bohep_downloader', 'decode_packed.js')
-    if os.path.exists(js_file_path):
-        shutil.copy(js_file_path, os.path.join(dist_dir, 'decode_packed.js'))
+    # For macOS, handle the app bundle
+    if system == 'darwin':
+        app_name = f'bohep-downloader-{system}-{arch}.app'
+        app_path = os.path.join('dist', app_name)
+        
+        # Create the app bundle structure if it doesn't exist
+        if not os.path.exists(app_path):
+            print(f"Creating app bundle structure at {app_path}")
+            os.makedirs(os.path.join(app_path, 'Contents', 'MacOS'), exist_ok=True)
+            os.makedirs(os.path.join(app_path, 'Contents', 'Resources'), exist_ok=True)
+            
+            # Copy the executable to the MacOS directory
+            executable_path = os.path.join('dist', executable_name)
+            if os.path.exists(executable_path):
+                macos_executable = os.path.join(app_path, 'Contents', 'MacOS', executable_name)
+                shutil.copy(executable_path, macos_executable)
+                # Make it executable
+                os.chmod(macos_executable, 0o755)
+            
+            # Create Info.plist
+            info_plist = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>{executable_name}</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.bohep.downloader</string>
+    <key>CFBundleName</key>
+    <string>Bohep Downloader</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.10</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>LSBackgroundOnly</key>
+    <false/>
+    <key>LSUIElement</key>
+    <false/>
+    <key>NSRequiresAquaSystemAppearance</key>
+    <false/>
+</dict>
+</plist>'''
+            
+            with open(os.path.join(app_path, 'Contents', 'Info.plist'), 'w') as f:
+                f.write(info_plist)
+        
+        # Copy decode_packed.js to various locations in the app bundle
+        js_file = 'bohep_downloader/decode_packed.js'
+        if os.path.exists(js_file):
+            # Copy to Resources
+            resources_dir = os.path.join(app_path, 'Contents', 'Resources')
+            if os.path.exists(resources_dir):
+                shutil.copy(js_file, resources_dir)
+            
+            # Copy to MacOS
+            macos_dir = os.path.join(app_path, 'Contents', 'MacOS')
+            if os.path.exists(macos_dir):
+                shutil.copy(js_file, macos_dir)
+            
+            # Copy to package directory
+            package_dir = os.path.join(app_path, 'Contents', 'MacOS', 'bohep_downloader')
+            os.makedirs(package_dir, exist_ok=True)
+            shutil.copy(js_file, package_dir)
+            
+            print(f"Copied {js_file} to all necessary locations in the app bundle")
+        else:
+            print(f"Warning: {js_file} not found")
+        
+        # Copy the app bundle to the distribution directory
+        dist_app_path = os.path.join(dist_dir, app_name)
+        if os.path.exists(dist_app_path):
+            shutil.rmtree(dist_app_path)
+        shutil.copytree(app_path, dist_app_path)
+        
+        # Create DMG
+        dmg_name = f'bohep-downloader-{system}-{arch}.dmg'
+        dmg_path = os.path.join('dist', dmg_name)
+        
+        # Remove existing DMG if it exists
+        if os.path.exists(dmg_path):
+            os.remove(dmg_path)
+        
+        print("Creating disk image...")
+        # Create DMG using create-dmg
+        try:
+            subprocess.run(['create-dmg',
+                          '--volname', 'Bohep Downloader',
+                          '--window-pos', '200', '120',
+                          '--window-size', '800', '400',
+                          '--icon-size', '100',
+                          '--icon', app_name, '190', '190',
+                          '--hide-extension', app_name,
+                          '--app-drop-link', '600', '185',
+                          dmg_path,
+                          dist_app_path], check=True)
+            print(f"Created DMG at {dmg_path}")
+        except subprocess.CalledProcessError as e:
+            print(f"Error creating DMG: {e}")
+            print("Falling back to manual DMG creation...")
+            # Create a temporary directory for DMG contents
+            temp_dmg_dir = os.path.join('dist', 'temp_dmg')
+            if os.path.exists(temp_dmg_dir):
+                shutil.rmtree(temp_dmg_dir)
+            os.makedirs(temp_dmg_dir)
+            
+            # Copy app to temp directory
+            shutil.copytree(dist_app_path, os.path.join(temp_dmg_dir, app_name))
+            
+            # Create DMG using hdiutil
+            subprocess.run(['hdiutil', 'create',
+                          '-volname', 'Bohep Downloader',
+                          '-srcfolder', temp_dmg_dir,
+                          '-ov',
+                          dmg_path], check=True)
+            
+            # Clean up temp directory
+            shutil.rmtree(temp_dmg_dir)
+            print(f"Created DMG at {dmg_path} using hdiutil")
+    else:
+        # For non-macOS platforms, copy the executable
+        shutil.copy(os.path.join('dist', executable_name), dist_dir)
     
     # Download dependencies
     download_dependencies()

@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('bohep_downloader/decode_packed.js', 'bohep_downloader'), ('bohep_downloader/decode_packed.js', '.')]
+datas = [('bohep_downloader/decode_packed.js', 'bohep_downloader'), ('bohep_downloader/decode_packed.js', '.'), ('bohep_downloader/decode_packed.js', 'Resources'), ('bohep_downloader/decode_packed.js', 'MacOS'), ('bohep_downloader/decode_packed.js', 'bohep_downloader')]
 binaries = []
 hiddenimports = ['bohep_downloader', 'bohep_downloader.downloader', 'encodings', 'encodings.aliases', 'encodings.utf_8', 'encodings.ascii', 'encodings.latin_1']
 tmp_ret = collect_all('bohep_downloader')
@@ -9,7 +9,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['bohep_downloader/cli.py'],
+    ['bohep_downloader/gui.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,
@@ -36,11 +36,17 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch='arm64',
     codesign_identity=None,
     entitlements_file=None,
-    icon=['assets/icon.icns'],
+    icon=['icon.icns'],
+)
+app = BUNDLE(
+    exe,
+    name='bohep-downloader-darwin-arm64.app',
+    icon='icon.icns',
+    bundle_identifier=None,
 )
