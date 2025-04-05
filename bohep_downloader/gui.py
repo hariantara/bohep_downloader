@@ -307,6 +307,11 @@ class BohepDownloaderGUI:
     def download_video(self):
         """Download the video in a separate thread."""
         try:
+            # Check if already downloading
+            if self.is_downloading:
+                self.update_status("A download is already in progress")
+                return
+                
             url = self.url_entry.get().strip()
             if not url:
                 raise ValueError("Please enter a video URL")

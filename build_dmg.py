@@ -71,6 +71,7 @@ def create_app_bundle():
     
     # Get FFmpeg path
     ffmpeg_path = subprocess.check_output(["which", "ffmpeg"]).decode().strip()
+    print(f"Found FFmpeg at: {ffmpeg_path}")
     
     # PyInstaller command with proper macOS app bundle settings
     cmd = [
@@ -84,7 +85,7 @@ def create_app_bundle():
         "--add-data=assets:assets",
         "--add-data=bohep_downloader/decode_packed.js:Resources",  # Add decode_packed.js to Resources
         "--add-data=bohep_downloader/decode_packed.js:MacOS",  # Add decode_packed.js to MacOS
-        f"--add-binary={ffmpeg_path}:MacOS",  # Add FFmpeg binary
+        f"--add-binary={ffmpeg_path}:MacOS",  # Add FFmpeg binary directly to MacOS
         "--target-arch=arm64",  # For Apple Silicon
         "--collect-all=customtkinter",  # Ensure customtkinter is fully bundled
         "--collect-all=tkinter",  # Ensure tkinter is fully bundled

@@ -687,89 +687,123 @@ class BohepDownloader:
                 raise ValueError("Download cancelled by user")
             raise e
 
-    def combine_segments(self, temp_dir, output_file, progress_callback=None):
-        """Combine downloaded segments into a final video file."""
+    def combine_segments(self, segments_dir, output_path, progress_callback=None):
+        """Combine downloaded segments into a single file using FFmpeg."""
         try:
-            # Get list of segment files in order
-            segment_files = sorted(temp_dir.glob("segment_*.ts"))
-            if not segment_files:
-                raise ValueError("No segments found to combine")
+            # Get the path to the bundled FFmpeg
+            if getattr(sys, 'frozen', False):
+                # Running in a bundle
+                bundle_dir = os.path.dirname(sys.executable)
+                ffmpeg_path = os.path.join(bundle_dir, "ffmpeg")
+                if not os.path.exists(ffmpeg_path):
+                    # Try alternative locations
+                    alt_paths = [
+                        os.path.join(bundle_dir, "ffmpeg"),
+                        os.path.join(os.path.dirname(bundle_dir), "MacOS", "ffmpeg"),
+                        os.path.join(bundle_dir, "..", "MacOS", "ffmpeg"),
+                        "/usr/local/bin/ffmpeg",
+                        "/opt/homebrew/bin/ffmpeg"
+                    ]
+                    for path in alt_paths:
+                        if os.path.exists(path):
+                            ffmpeg_path = path
+                            break
+                    else:
+                        raise Exception("FFmpeg not found in the application bundle")
+            else:
+                # Running in development
+                ffmpeg_path = "ffmpeg"
+            
+            print(f"Using FFmpeg from: {ffmpeg_path}")
             
             # Create a file list for FFmpeg
-            file_list = temp_dir / "file_list.txt"
-            with open(file_list, 'w') as f:
-                for segment in segment_files:
-                    f.write(f"file '{segment}'\n")
-            
-            print("\nCombining segments with FFmpeg...")
+            file_list = os.path.join(segments_dir, "file_list.txt")
+            with open(file_list, "w") as f:
+                for segment in sorted(os.listdir(segments_dir)):
+                    if segment.endswith(".ts"):
+                        f.write(f"file '{os.path.join(segments_dir, segment)}'\n")
             
             # Use FFmpeg to combine segments
-            ffmpeg_cmd = [
-                "ffmpeg",
+            cmd = [
+                ffmpeg_path,
                 "-f", "concat",
                 "-safe", "0",
-                "-i", str(file_list),
+                "-i", file_list,
                 "-c", "copy",
                 "-bsf:a", "aac_adtstoasc",
-                "-movflags", "+faststart",
-                str(output_file)
+                output_path
             ]
             
-            process = subprocess.Popen(
-                ffmpeg_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
+            # Create a progress bar for FFmpeg
+            progress_bar = tqdm(total=100, desc="Combining segments", unit="%", position=0, leave=True)
+            last_progress = 95  # Start from where download_segments left off
             
-            # Create progress bar for FFmpeg
-            pbar = tqdm(total=100, desc="Combining segments", unit="%", position=0, leave=True)
-            last_progress = 90  # Start from where download_segments left off
+            # Start FFmpeg process
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
             
             # Monitor FFmpeg progress
             while True:
+                # Check if process has finished
+                if process.poll() is not None:
+                    break
+                
+                # Check for cancellation
                 if self.is_cancelled():
                     process.terminate()
-                    break
+                    raise Exception("Download cancelled by user")
                 
-                line = process.stderr.readline()
-                if not line and process.poll() is not None:
-                    break
+                # Update progress (simulate progress from 95% to 100%)
+                if last_progress < 100:
+                    last_progress += 1
+                    progress_bar.update(1)
+                    if progress_callback:
+                        progress_callback({
+                            'percentage': last_progress,
+                            'stage': 'combine',
+                            'completed': last_progress - 95,
+                            'total': 5,
+                            'speed': 0,
+                            'eta': 0
+                        })
                 
+                time.sleep(0.5)
+            
+            # Ensure progress reaches 100%
+            if last_progress < 100:
+                progress_bar.update(100 - last_progress)
                 if progress_callback:
-                    # Update progress from 90% to 100%
-                    current_progress = min(last_progress + 1, 100)
                     progress_callback({
-                        'percentage': current_progress,
-                        'completed': len(segment_files),
-                        'total': len(segment_files),
+                        'percentage': 100,
+                        'stage': 'complete',
+                        'completed': 5,
+                        'total': 5,
                         'speed': 0,
-                        'eta': 0,
-                        'stage': 'combine'
+                        'eta': 0
                     })
-                    pbar.update(current_progress - last_progress)
-                    last_progress = current_progress
             
-            pbar.close()
+            # Close progress bar
+            progress_bar.close()
             
+            # Check if FFmpeg completed successfully
             if process.returncode != 0:
-                raise ValueError("Failed to combine video segments")
+                stderr_output = process.stderr.read() if process.stderr else "No error output available"
+                raise Exception(f"Failed to combine segments. FFmpeg error: {stderr_output}")
             
-            print("\nVideo combination completed!")
-            
-            # Ensure we reach 100% at the end
-            if progress_callback:
-                progress_callback({
-                    'percentage': 100,
-                    'completed': len(segment_files),
-                    'total': len(segment_files),
-                    'speed': 0,
-                    'eta': 0,
-                    'stage': 'complete'
-                })
+            # Clean up temporary files
+            os.remove(file_list)
+            shutil.rmtree(segments_dir)
             
         except Exception as e:
-            if self.is_cancelled():
-                raise ValueError("Download cancelled by user")
+            # Clean up on error
+            if os.path.exists(file_list):
+                os.remove(file_list)
+            if os.path.exists(segments_dir):
+                shutil.rmtree(segments_dir)
             raise e
 
     def download_video(self, url, output_path):
