@@ -71,14 +71,55 @@ pip install -r requirements.txt
 
 ## Running the Application
 
-### macOS/Linux
+### Running the Released Version
+
+1. Download the latest release from the [releases page](https://github.com/hariantara/bohep_downloader/releases/latest)
+2. Mount the DMG file
+3. Drag the Bohep Downloader app to your Applications folder
+4. Launch the app from your Applications folder
+
+### Running from Source
+
+#### macOS/Linux
 ```bash
+# Clone the repository
+git clone https://github.com/hariantara/bohep_downloader.git
+cd bohep_downloader
+
+# Create and activate virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the application
 python -m bohep_downloader
 ```
 
-### Windows
+#### Windows
 ```bash
+# Clone the repository
+git clone https://github.com/hariantara/bohep_downloader.git
+cd bohep_downloader
+
+# Create and activate virtual environment
+python -m venv venv
+venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the application
 python -m bohep_downloader
+```
+
+### Development Mode
+
+To run the application in development mode with debug output:
+
+```bash
+python -m bohep_downloader --debug
 ```
 
 ## Usage
